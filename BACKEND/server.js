@@ -11,26 +11,30 @@ const app = express();
 
 // ✅ List allowed origins
 const allowedOrigins = [
-  "https://background-remover-fronten.vercel.app", // your Vercel frontend
-  "http://localhost:3000" // local dev
+  "https://background-remover-fronten.vercel.app",
+  "http://localhost:3000"
 ];
 
-// ✅ Proper dynamic CORS setup
+// ✅ Dynamic CORS setup (Safari + Android safe)
 app.use((req, res, next) => {
   const origin = req.headers.origin;
-  if (allowedOrigins.includes(origin)) {
-    res.setHeader("Access-Control-Allow-Origin", origin);
-  }
-  res.setHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
-  res.setHeader("Access-Control-Allow-Credentials", "true");
 
-  // Handle preflight requests
-  if (req.method === "OPTIONS") {
-    return res.sendStatus(200);
+  if (allowedOrigins.includes(origin)) {
+    res.header("Access-Control-Allow-Origin", origin);
   }
+
+  res.header("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
+  res.header("Access-Control-Allow-Headers", "Content-Type");
+  res.header("Access-Control-Allow-Credentials", "true");
+
+  // ✅ Important for Safari/Android — must send headers with OPTIONS
+  if (req.method === "OPTIONS") {
+    return res.status(200).json({ message: "CORS preflight OK" });
+  }
+
   next();
 });
+
 
 
 app.use(express.json());
