@@ -15,21 +15,20 @@ const allowedOrigins = [
   "http://localhost:3000"
 ];
 
-// ✅ Dynamic CORS setup (Safari + Android safe)
 app.use((req, res, next) => {
   const origin = req.headers.origin;
 
   if (allowedOrigins.includes(origin)) {
-    res.header("Access-Control-Allow-Origin", origin);
+    res.setHeader("Access-Control-Allow-Origin", origin);
   }
 
-  res.header("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
-  res.header("Access-Control-Allow-Headers", "Content-Type");
-  res.header("Access-Control-Allow-Credentials", "true");
+  res.setHeader("Vary", "Origin");
+  res.setHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
+  res.setHeader("Access-Control-Allow-Credentials", "true");
 
-  // ✅ Important for Safari/Android — must send headers with OPTIONS
   if (req.method === "OPTIONS") {
-    return res.status(200).json({ message: "CORS preflight OK" });
+    return res.status(204).end(); // ✅ Safari-friendly response
   }
 
   next();
