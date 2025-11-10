@@ -11,7 +11,7 @@ const app = express();
 
 // ✅ Enable CORS for your React app
 app.use(cors({
-  origin: "http://localhost:3000",
+  origin: "https://background-remover-fronten.vercel.app",
   methods: ["GET", "POST"],
   credentials: true
 }));
