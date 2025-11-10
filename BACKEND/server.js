@@ -9,24 +9,28 @@ import FormData from "form-data"; // ✅ You missed this import
 dotenv.config();
 const app = express();
 
+// ✅ List allowed origins
 const allowedOrigins = [
-  "https://background-remover-fronten.vercel.app",
-  "http://localhost:3000"
+  "https://background-remover-fronten.vercel.app", // your Vercel frontend
+  "http://localhost:3000" // local dev
 ];
 
-app.use(cors({
-  origin: function (origin, callback) {
-    if (!origin || allowedOrigins.includes(origin)) {
-      callback(null, true);
-    } else {
-      callback(new Error("Not allowed by CORS"));
-    }
-  },
-  methods: ["GET", "POST", "OPTIONS"],
-  credentials: true
-}));
+// ✅ Proper dynamic CORS setup
+app.use((req, res, next) => {
+  const origin = req.headers.origin;
+  if (allowedOrigins.includes(origin)) {
+    res.setHeader("Access-Control-Allow-Origin", origin);
+  }
+  res.setHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+  res.setHeader("Access-Control-Allow-Credentials", "true");
 
-app.options("*", cors());
+  // Handle preflight requests
+  if (req.method === "OPTIONS") {
+    return res.sendStatus(200);
+  }
+  next();
+});
 
 
 app.use(express.json());
