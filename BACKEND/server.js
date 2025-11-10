@@ -14,22 +14,19 @@ const allowedOrigins = [
   "http://localhost:3000"
 ];
 
-app.use((req, res, next) => {
-  const origin = req.headers.origin;
-  if (allowedOrigins.includes(origin)) {
-    res.header("Access-Control-Allow-Origin", origin);
-  }
-  res.header("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
-  res.header("Access-Control-Allow-Headers", "Content-Type");
-  res.header("Access-Control-Allow-Credentials", "true");
+app.use(cors({
+  origin: function (origin, callback) {
+    if (!origin || allowedOrigins.includes(origin)) {
+      callback(null, true);
+    } else {
+      callback(new Error("Not allowed by CORS"));
+    }
+  },
+  methods: ["GET", "POST", "OPTIONS"],
+  credentials: true
+}));
 
-  // ✅ Safari/Mobile Fix: send headers with OPTIONS too
-  if (req.method === "OPTIONS") {
-    return res.status(200).end(); // instead of sendStatus(200)
-  }
-
-  next();
-});
+app.options("*", cors());
 
 
 app.use(express.json());
