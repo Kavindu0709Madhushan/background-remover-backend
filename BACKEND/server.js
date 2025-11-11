@@ -1,16 +1,15 @@
 import express from "express";
 import multer from "multer";
-import axios from "axios";
 import cors from "cors";
 import fs from "fs";
+import { Rembg } from "rembg";
 import dotenv from "dotenv";
-import FormData from "form-data";
 
 dotenv.config();
 
 const app = express();
 
-// ✅ Improved CORS configuration
+// ✅ Allowed origins for frontend
 const allowedOrigins = [
   "https://background-remover-frontview.vercel.app",
   "http://localhost:3000",
@@ -19,170 +18,92 @@ const allowedOrigins = [
 
 const corsOptions = {
   origin: function (origin, callback) {
-    // Allow requests with no origin (mobile apps, Postman, etc.)
     if (!origin || allowedOrigins.includes(origin)) {
       callback(null, true);
     } else {
-      callback(new Error('Not allowed by CORS'));
+      callback(new Error("Not allowed by CORS"));
     }
   },
   credentials: true,
-  methods: ['GET', 'POST', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization'],
-  preflightContinue: false,
-  optionsSuccessStatus: 204
+  methods: ["GET", "POST", "OPTIONS"],
+  allowedHeaders: ["Content-Type", "Authorization"],
 };
 
 app.use(cors(corsOptions));
 app.use(express.json());
 
-// ✅ Health check endpoint
+// ✅ Health check
 app.get("/", (req, res) => {
   res.json({ status: "Server is running", timestamp: new Date().toISOString() });
 });
 
-app.get("/api/health", (req, res) => {
-  res.json({ status: "OK", service: "Background Remover API" });
-});
-
-// ✅ Set up Multer with error handling
-const upload = multer({ 
+// ✅ Setup Multer
+const upload = multer({
   dest: "uploads/",
-  limits: {
-    fileSize: 10 * 1024 * 1024 // 10MB limit
-  },
+  limits: { fileSize: 10 * 1024 * 1024 }, // 10MB
   fileFilter: (req, file, cb) => {
-    const allowedTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp'];
-    if (allowedTypes.includes(file.mimetype)) {
-      cb(null, true);
-    } else {
-      cb(new Error('Invalid file type. Only JPEG, PNG and WEBP are allowed.'));
-    }
-  }
+    const allowedTypes = ["image/jpeg", "image/png", "image/webp"];
+    if (allowedTypes.includes(file.mimetype)) cb(null, true);
+    else cb(new Error("Invalid file type. Only JPG, PNG, WEBP allowed."));
+  },
 });
 
-// ✅ Background remove route with better error handling
+// ✅ Background remove route using local AI model
 app.post("/api/remove-bg", upload.single("image"), async (req, res) => {
   let imagePath = null;
-  
+  const rembg = new Rembg(); // initialize model
+
   try {
     if (!req.file) {
-      return res.status(400).json({ 
-        error: "No image uploaded",
-        message: "Please select an image file"
-      });
+      return res.status(400).json({ error: "No image uploaded" });
     }
 
     imagePath = req.file.path;
-    console.log("Processing image:", req.file.originalname);
+    console.log("🧠 Processing:", req.file.originalname);
 
-    // ✅ Prepare form-data to send to Remove.bg
-    const formData = new FormData();
-    formData.append("image_file", fs.createReadStream(imagePath));
-    formData.append("size", "auto");
+    // 🧩 Read file and remove background
+    const input = fs.readFileSync(imagePath);
+    const output = await rembg.remove(input);
 
-    // ✅ Send image to Remove.bg API with timeout
-    const result = await axios.post(
-      "https://api.remove.bg/v1.0/removebg", 
-      formData, 
-      {
-        headers: {
-          ...formData.getHeaders(),
-          "X-Api-Key": process.env.REMOVEBG_API_KEY,
-        },
-        responseType: "arraybuffer",
-        timeout: 30000, // 30 second timeout
-        maxContentLength: Infinity,
-        maxBodyLength: Infinity
-      }
-    );
+    // ✅ Convert output to base64 for frontend
+    const imageBase64 = Buffer.from(output).toString("base64");
 
-    // ✅ Convert result to base64 for React
-    const imageBase64 = Buffer.from(result.data).toString("base64");
+    // 🧹 Remove temp file
+    fs.unlinkSync(imagePath);
 
-    // ✅ Clean up temp file
-    if (imagePath && fs.existsSync(imagePath)) {
-      fs.unlinkSync(imagePath);
-    }
-
-    // ✅ Send processed image back to frontend
-    res.json({ 
+    res.json({
       success: true,
       image: `data:image/png;base64,${imageBase64}`,
-      message: "Background removed successfully"
+      message: "Background removed successfully (Local AI)",
     });
-
   } catch (error) {
-    // ✅ Clean up temp file on error
-    if (imagePath && fs.existsSync(imagePath)) {
-      try {
-        fs.unlinkSync(imagePath);
-      } catch (unlinkError) {
-        console.error("Error deleting temp file:", unlinkError);
-      }
-    }
-
-    console.error("Error details:", {
-      message: error.message,
-      response: error.response?.data?.toString(),
-      status: error.response?.status
-    });
-
-    // ✅ Better error messages
-    let errorMessage = "Failed to remove background";
-    let statusCode = 500;
-
-    if (error.response) {
-      statusCode = error.response.status;
-      
-      if (error.response.status === 403) {
-        errorMessage = "Invalid API key or insufficient credits";
-      } else if (error.response.status === 400) {
-        errorMessage = "Invalid image format or size";
-      } else if (error.response.data?.errors) {
-        errorMessage = error.response.data.errors[0]?.title || errorMessage;
-      }
-    } else if (error.code === 'ECONNABORTED') {
-      errorMessage = "Request timeout. Please try again.";
-      statusCode = 408;
-    } else if (error.code === 'ENOTFOUND' || error.code === 'ECONNREFUSED') {
-      errorMessage = "Cannot connect to background removal service";
-      statusCode = 503;
-    }
-
-    res.status(statusCode).json({
+    console.error("Error:", error);
+    if (imagePath && fs.existsSync(imagePath)) fs.unlinkSync(imagePath);
+    res.status(500).json({
       success: false,
-      error: errorMessage,
-      details: process.env.NODE_ENV === 'development' ? error.message : undefined
+      error: "Failed to remove background",
+      details: error.message,
     });
   }
 });
 
-// ✅ Error handling middleware
+// ✅ Error handler
 app.use((err, req, res, next) => {
-  console.error("Global error handler:", err);
-  
+  console.error("Global error:", err);
   if (err instanceof multer.MulterError) {
-    if (err.code === 'LIMIT_FILE_SIZE') {
-      return res.status(400).json({ error: "File too large. Maximum size is 10MB" });
+    if (err.code === "LIMIT_FILE_SIZE") {
+      return res.status(400).json({ error: "File too large (max 10MB)" });
     }
-    return res.status(400).json({ error: err.message });
   }
-  
-  res.status(500).json({ 
-    error: "Internal server error",
-    message: process.env.NODE_ENV === 'development' ? err.message : undefined
-  });
+  res.status(500).json({ error: err.message });
 });
 
-// ✅ 404 handler
-app.use((req, res) => {
-  res.status(404).json({ error: "Route not found" });
-});
+// ✅ 404
+app.use((req, res) => res.status(404).json({ error: "Route not found" }));
 
 // ✅ Start server
 const PORT = process.env.PORT || 3001;
 app.listen(PORT, () => {
-  console.log(`🚀 Server running on port ${PORT}`);
-  console.log(`📍 Health check: http://localhost:${PORT}/api/health`);
+  console.log(`🚀 Local Background Remover running on port ${PORT}`);
+  console.log(`📍 Test at: http://localhost:${PORT}/api/remove-bg`);
 });
