@@ -10,55 +10,58 @@ dotenv.config();
 
 const app = express();
 
-// ✅ IMPROVED CORS configuration - Allow all origins during development
-const allowedOrigins = [
-  "https://background-remover-frontview.vercel.app",
-  "http://localhost:3000",
-  "http://localhost:3001",
-  "http://localhost:5173", // Vite default
-  "http://127.0.0.1:3000",
-  "http://127.0.0.1:5173"
-];
-
+// ✅ FIXED: Simpler CORS configuration that allows your frontend
 const corsOptions = {
   origin: function (origin, callback) {
-    // Allow requests with no origin (like mobile apps, Postman, or same-origin)
+    // Allow requests with no origin (mobile apps, Postman, curl)
     if (!origin) return callback(null, true);
     
-    if (allowedOrigins.includes(origin)) {
+    const allowedOrigins = [
+      "https://background-remover-frontview.vercel.app",
+      "http://localhost:3000",
+      "http://localhost:3001",
+      "http://localhost:5173",
+      "http://127.0.0.1:3000",
+      "http://127.0.0.1:5173"
+    ];
+    
+    // Check if origin is allowed
+    if (allowedOrigins.some(allowed => origin.startsWith(allowed))) {
+      callback(null, true);
+    } else if (process.env.NODE_ENV !== "production") {
+      // Allow all origins in development
       callback(null, true);
     } else {
-      // In development, allow all origins
-      if (process.env.NODE_ENV !== "production") {
-        callback(null, true);
-      } else {
-        callback(new Error("Not allowed by CORS"));
-      }
+      console.warn(`⚠️  Blocked by CORS: ${origin}`);
+      callback(new Error("Not allowed by CORS"));
     }
   },
   credentials: true,
   methods: ["GET", "POST", "OPTIONS"],
   allowedHeaders: ["Content-Type", "Authorization", "Accept"],
-  preflightContinue: false,
-  optionsSuccessStatus: 204,
+  optionsSuccessStatus: 200
 };
 
 app.use(cors(corsOptions));
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
-// ✅ Add request logging
+// ✅ Request logging
 app.use((req, res, next) => {
-  console.log(`[${new Date().toISOString()}] ${req.method} ${req.path}`);
+  console.log(`[${new Date().toISOString()}] ${req.method} ${req.path} - Origin: ${req.headers.origin || 'none'}`);
   next();
 });
 
-// ✅ Health check endpoint
+// ✅ Health check endpoints
 app.get("/", (req, res) => {
   res.json({ 
     status: "Server is running", 
     timestamp: new Date().toISOString(),
-    apiKey: process.env.PIXIAN_API_KEY ? "Configured ✓" : "Missing ✗"
+    apiKey: process.env.PIXIAN_API_KEY ? "Configured ✓" : "Missing ✗",
+    endpoints: {
+      health: "/api/health",
+      removeBackground: "/api/remove-bg"
+    }
   });
 });
 
@@ -66,11 +69,19 @@ app.get("/api/health", (req, res) => {
   res.json({ 
     status: "OK", 
     service: "Pixian Background Remover API",
-    timestamp: new Date().toISOString()
+    timestamp: new Date().toISOString(),
+    pixianKey: process.env.PIXIAN_API_KEY ? "Configured" : "Missing"
   });
 });
 
-// ✅ Set up Multer with better error handling
+// ✅ Create uploads directory if it doesn't exist
+const uploadsDir = "./uploads";
+if (!fs.existsSync(uploadsDir)) {
+  fs.mkdirSync(uploadsDir, { recursive: true });
+  console.log("✓ Created uploads directory");
+}
+
+// ✅ Multer configuration with better error handling
 const upload = multer({
   dest: "uploads/",
   limits: { 
@@ -80,10 +91,10 @@ const upload = multer({
   fileFilter: (req, file, cb) => {
     const allowedTypes = ["image/jpeg", "image/jpg", "image/png", "image/webp"];
     
-    console.log("Received file:", {
-      originalname: file.originalname,
-      mimetype: file.mimetype,
-      size: file.size
+    console.log("📤 File received:", {
+      name: file.originalname,
+      type: file.mimetype,
+      size: `${(file.size / 1024).toFixed(2)} KB`
     });
     
     if (allowedTypes.includes(file.mimetype)) {
@@ -94,20 +105,14 @@ const upload = multer({
   },
 });
 
-// ✅ Create uploads directory if it doesn't exist
-const uploadsDir = "./uploads";
-if (!fs.existsSync(uploadsDir)) {
-  fs.mkdirSync(uploadsDir, { recursive: true });
-  console.log("✓ Created uploads directory");
-}
-
-// ✅ Background remove route (Pixian.ai)
+// ✅ Background removal route
 app.post("/api/remove-bg", upload.single("image"), async (req, res) => {
   let imagePath = null;
 
   try {
-    // Check if API key is configured
+    // Validate API key
     if (!process.env.PIXIAN_API_KEY) {
+      console.error("❌ PIXIAN_API_KEY not configured");
       return res.status(500).json({
         success: false,
         error: "Server configuration error",
@@ -115,6 +120,7 @@ app.post("/api/remove-bg", upload.single("image"), async (req, res) => {
       });
     }
 
+    // Validate file upload
     if (!req.file) {
       return res.status(400).json({
         success: false,
@@ -124,53 +130,67 @@ app.post("/api/remove-bg", upload.single("image"), async (req, res) => {
     }
 
     imagePath = req.file.path;
-    console.log("✓ Processing image:", req.file.originalname, `(${(req.file.size / 1024).toFixed(2)} KB)`);
+    console.log(`✓ Processing: ${req.file.originalname} (${(req.file.size / 1024).toFixed(2)} KB)`);
 
-    // ✅ Verify file exists and is readable
+    // Verify file exists
     if (!fs.existsSync(imagePath)) {
-      throw new Error("Uploaded file not found");
+      throw new Error("Uploaded file not found on server");
     }
 
-    // ✅ Prepare form-data for Pixian API
+    // Prepare FormData for Pixian API
     const formData = new FormData();
     formData.append("image", fs.createReadStream(imagePath));
 
-    console.log("→ Sending request to Pixian API...");
+    console.log("→ Sending to Pixian API...");
 
-    // ✅ Send image to Pixian.ai API
-    const result = await axios.post("https://api.pixian.ai/api/v2/remove-background", formData, {
-      headers: {
-        ...formData.getHeaders(),
-        "Authorization": `Bearer ${process.env.PIXIAN_API_KEY}`,
-      },
-      responseType: "arraybuffer",
-      timeout: 60000, // Increased to 60 seconds
-      maxContentLength: Infinity,
-      maxBodyLength: Infinity,
-      validateStatus: function (status) {
-        return status >= 200 && status < 500; // Don't throw on 4xx errors
+    // Call Pixian API
+    const result = await axios.post(
+      "https://api.pixian.ai/api/v2/remove-background", 
+      formData, 
+      {
+        headers: {
+          ...formData.getHeaders(),
+          "Authorization": `Bearer ${process.env.PIXIAN_API_KEY}`,
+        },
+        responseType: "arraybuffer",
+        timeout: 60000, // 60 seconds
+        maxContentLength: Infinity,
+        maxBodyLength: Infinity,
+        validateStatus: (status) => status >= 200 && status < 500
       }
-    });
+    );
 
-    // Check if response is successful
+    // Handle API response
     if (result.status !== 200) {
       const errorText = Buffer.from(result.data).toString('utf-8');
-      console.error("Pixian API error:", errorText);
-      throw new Error(`Pixian API returned status ${result.status}: ${errorText}`);
+      console.error(`❌ Pixian API error (${result.status}):`, errorText);
+      
+      let errorMessage = "Failed to remove background";
+      if (result.status === 401 || result.status === 403) {
+        errorMessage = "Invalid Pixian API key";
+      } else if (result.status === 429) {
+        errorMessage = "Rate limit exceeded. Please try again later.";
+      } else if (result.status === 402) {
+        errorMessage = "Pixian API credits exhausted";
+      } else if (result.status === 400) {
+        errorMessage = "Invalid image format";
+      }
+      
+      throw new Error(errorMessage);
     }
 
-    console.log("✓ Received response from Pixian API");
+    console.log("✓ Successfully processed by Pixian API");
 
-    // ✅ Convert result to base64
+    // Convert to base64
     const imageBase64 = Buffer.from(result.data).toString("base64");
 
-    // ✅ Clean up temp file
+    // Clean up temp file
     if (imagePath && fs.existsSync(imagePath)) {
       fs.unlinkSync(imagePath);
       console.log("✓ Cleaned up temp file");
     }
 
-    // ✅ Send processed image back to frontend
+    // Send response
     res.json({
       success: true,
       image: `data:image/png;base64,${imageBase64}`,
@@ -184,20 +204,20 @@ app.post("/api/remove-bg", upload.single("image"), async (req, res) => {
         fs.unlinkSync(imagePath);
         console.log("✓ Cleaned up temp file after error");
       } catch (unlinkError) {
-        console.error("✗ Error deleting temp file:", unlinkError.message);
+        console.error("❌ Error deleting temp file:", unlinkError.message);
       }
     }
 
-    console.error("✗ Error processing image:", {
+    console.error("❌ Error processing image:", {
       message: error.message,
       code: error.code,
-      status: error.response?.status,
-      data: error.response?.data?.toString()?.substring(0, 200)
+      status: error.response?.status
     });
 
     let errorMessage = "Failed to remove background";
     let statusCode = 500;
 
+    // Handle specific error types
     if (error.response) {
       statusCode = error.response.status;
       
@@ -207,6 +227,7 @@ app.post("/api/remove-bg", upload.single("image"), async (req, res) => {
         errorMessage = "Invalid image format or corrupted file";
       } else if (error.response.status === 429) {
         errorMessage = "Rate limit exceeded. Please try again later.";
+        statusCode = 429;
       } else if (error.response.status === 402) {
         errorMessage = "Pixian API credits exhausted";
       }
@@ -214,7 +235,7 @@ app.post("/api/remove-bg", upload.single("image"), async (req, res) => {
       errorMessage = "Request timeout. Please try with a smaller image.";
       statusCode = 408;
     } else if (error.code === "ENOTFOUND" || error.code === "ECONNREFUSED") {
-      errorMessage = "Cannot connect to Pixian service. Please check your internet connection.";
+      errorMessage = "Cannot connect to Pixian service";
       statusCode = 503;
     } else if (error.message) {
       errorMessage = error.message;
@@ -230,7 +251,7 @@ app.post("/api/remove-bg", upload.single("image"), async (req, res) => {
 
 // ✅ Error handling middleware
 app.use((err, req, res, next) => {
-  console.error("✗ Global error handler:", err.message);
+  console.error("❌ Global error:", err.message);
   
   if (err instanceof multer.MulterError) {
     if (err.code === "LIMIT_FILE_SIZE") {
@@ -264,37 +285,69 @@ app.use((req, res) => {
   res.status(404).json({ 
     success: false,
     error: "Route not found",
-    path: req.path
+    path: req.path,
+    availableEndpoints: ["/", "/api/health", "/api/remove-bg"]
   });
 });
 
 // ✅ Start server
 const PORT = process.env.PORT || 3001;
 const server = app.listen(PORT, () => {
-  console.log(`\n🚀 Background Remover API Server`);
-  console.log(`📍 Server running on port ${PORT}`);
-  console.log(`🔗 Health check: http://localhost:${PORT}/api/health`);
-  console.log(`🔑 Pixian API Key: ${process.env.PIXIAN_API_KEY ? "Configured ✓" : "Missing ✗"}`);
-  console.log(`🌍 Environment: ${process.env.NODE_ENV || "development"}\n`);
+  console.log(`
+╔════════════════════════════════════════════════════╗
+║   🚀 Background Remover API Server                ║
+╠════════════════════════════════════════════════════╣
+║   📍 Port: ${PORT.toString().padEnd(39)} ║
+║   🔗 Health: http://localhost:${PORT}/api/health${' '.repeat(13)}║
+║   🔑 Pixian Key: ${(process.env.PIXIAN_API_KEY ? 'Configured ✓' : 'Missing ✗').padEnd(30)} ║
+║   🌍 Environment: ${(process.env.NODE_ENV || 'development').padEnd(29)} ║
+╚════════════════════════════════════════════════════╝
+  `);
 });
 
 // Handle server errors
 server.on('error', (error) => {
   if (error.code === 'EADDRINUSE') {
-    console.error(`✗ Port ${PORT} is already in use`);
+    console.error(`❌ Port ${PORT} is already in use`);
     process.exit(1);
   } else {
-    console.error('✗ Server error:', error);
+    console.error('❌ Server error:', error);
   }
 });
 
 // Graceful shutdown
 process.on('SIGTERM', () => {
-  console.log('\n⚠️  SIGTERM signal received: closing HTTP server');
+  console.log('\n⚠️  SIGTERM received: closing HTTP server');
   server.close(() => {
     console.log('✓ HTTP server closed');
+    
+    // Clean up uploads directory
+    if (fs.existsSync(uploadsDir)) {
+      const files = fs.readdirSync(uploadsDir);
+      files.forEach(file => {
+        try {
+          fs.unlinkSync(`${uploadsDir}/${file}`);
+        } catch (err) {
+          console.error(`Failed to delete ${file}:`, err.message);
+        }
+      });
+    }
+    
     process.exit(0);
   });
 });
+
+// Clean up old uploads on startup
+if (fs.existsSync(uploadsDir)) {
+  const files = fs.readdirSync(uploadsDir);
+  files.forEach(file => {
+    try {
+      fs.unlinkSync(`${uploadsDir}/${file}`);
+    } catch (err) {
+      // Ignore errors
+    }
+  });
+  console.log("✓ Cleaned up old uploads");
+}
 
 export default app;
