@@ -12,7 +12,7 @@ const app = express();
 
 // ✅ Improved CORS configuration
 const allowedOrigins = [
-  "https://background-remover-fronten.vercel.app",
+  "https://background-remover-frontview.vercel.app",
   "http://localhost:3000",
   "http://localhost:3001"
 ];
